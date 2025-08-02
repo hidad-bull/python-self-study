@@ -1,0 +1,129 @@
+import pandas as pd
+
+uriage_data = pd.read_csv("uriage.csv")
+uriage_data.head()
+
+kokyaku_data = pd.read_excel("kokyaku_daicho.xlsx")
+kokyaku_data.head()
+
+uriage_data["item_name"].head()
+
+uriage_data["item_price"].head()
+
+#データが汚いまま集計
+uriage_data["purchase_data"] = pd.to_datetime(uriage_data["purchase_date"]) #日付の処理
+uriage_data["purchase_month"] = uriage_data["purchase_date"].dt.strftime("%Y%m")
+res = uriage_data.pivot_table(index="purchase_month", columns="item_name", aggfunc="size", fill_value=0)
+res
+
+res = uriage_data.pivot_table(index="purchase_month", columns="item_name", values="item_price", aggfunc="sum", fill_value=0)
+res
+
+#item_nameの重複を除外したデータをuniqueで確認
+print(len(pd.unique(uriage_data["item_name"])))
+
+uriage_data["item_name"] = uriage_data["item_name"].str.upper() #小文字を大文字に変換し統一
+uriage_data["item_name"] = uriage_data["item_name"].str.replace("  ", "") #全角スペースを除去
+uriage_data["item_name"] = uriage_data["item_name"].str.replace(" ", "") #半角スペースを除去
+uriage_data.sort_values(by=["item_name"], ascending=True) #sortで名前順に並び替える
+
+#unique関数で補正されたか確認
+print(pd.unique(uriage_data["item_name"]))
+print(len(pd.unique(uriage_data["item_name"])))
+
+#isnullを使い欠損値の確認
+uriage_data.isnull().any(axis=0)
+
+ #item_priceの中で欠損値のある個所を特定
+flg_is_null = uriage_data["item_price"].isnull()
+#ループ処理を行う。loc関数は条件に合致するデータを抽出する。item_nameで列を指定。uniqueで商品名の重複を無くす。
+for trg in list(uriage_data.loc[flg_is_null, "item_name"].unique()):
+#欠損値がある商品名の金額が正しく記載されている行をloc関数で取得。~flg_is_nullは否定演算子で「flg_is_null == False」と同じ。これで欠損値がある商品と同じ商品データから金額を取得できる。
+  price = uriage_data.loc[(~flg_is_null) & (uriage_data["item_name"] == trg), "item_price"].max()
+#売上履歴のitem_priceにloc関数で欠損している対象データを抽出しpriceを欠損値に代入
+  uriage_data.loc[(flg_is_null) & (uriage_data["item_name"]==trg),"item_price"] = price
+uriage_data.head()
+
+#補完されたか確認
+uriage_data.isnull().any(axis=0)
+
+#各商品の金額が正しく補完されたか確認。
+for trg in list(uriage_data["item_name"].sort_values().unique()): #ループ処理
+  print(trg + "の最大値:" + str(uriage_data.loc[uriage_data["item_name"]==trg]["item_price"].max()) + "の最小値:" + str(uriage_data.loc[uriage_data["item_name"]==trg]["item_price"].min(skipna=False)))
+#min(skipna=False)のskipnaはNaNデータを無視するかを設定できる。今回はNaNが存在する場合、最小値はNaNと表示される。
+
+#顧客台帳の補正
+kokyaku_data["顧客名"].head()
+
+uriage_data["customer_name"].head()
+
+#名前の全角、半角スペースを除去
+kokyaku_data["顧客名"] = kokyaku_data["顧客名"].str.replace("　", "")
+kokyaku_data["顧客名"] = kokyaku_data["顧客名"].str.replace(" ", "")
+kokyaku_data["顧客名"].head()
+
+#日付を補正
+#顧客台帳の登録日が数値かどうかを判定し格納
+flg_is_serial = kokyaku_data["登録日"].astype("str").str.isdigit()
+#対象件数を確認
+flg_is_serial.sum()
+
+#timedeltaを用いて数値から日付に変換
+#うるう年を考慮し２を引く
+fromSerial = pd.to_timedelta(kokyaku_data.loc[flg_is_serial, "登録日"].astype("float") - 2, unit="D") + pd.to_datetime("1900/1/1")
+fromSerial
+
+#日付として取り込まれている対象の書式統一　スラッシュをハイフンに統一
+fromString = pd.to_datetime(kokyaku_data.loc[~flg_is_serial, "登録日"])
+fromString
+
+#数値から日付にしたデータとスラッシュからハイフンにしたデータの結合
+kokyaku_data["登録日"] = pd.concat([fromSerial, fromString])
+kokyaku_data
+
+#登録年月を作成しgroupbyで集計した後countで件数を確認
+kokyaku_data["登録年月"] = kokyaku_data["登録日"].dt.strftime("%Y%m")
+rslt = kokyaku_data.groupby("登録年月").count()["顧客名"]
+print(rslt)
+print(len(kokyaku_data))
+
+#登録日列に数値データが残ってないか確認
+flg_is_serial = kokyaku_data["登録日"].astype("str").str.isdigit()
+flg_is_serial.sum()
+
+#顧客名をキーにデータ結合（ジョイン）
+join_data = pd.merge(uriage_data, kokyaku_data, left_on="customer_name", right_on="顧客名", how="left")
+join_data = join_data.drop("customer_name", axis=1)
+join_data
+
+#並び順の整理
+dump_data = join_data[["purchase_date", "purchase_month", "item_name", "item_price", "顧客名", "かな", "地域", "メールアドレス", "登録日"]]
+dump_data
+
+#上記データを格納
+dump_data.to_csv("dump_data.csv", index=False)
+
+import_data = pd.read_csv("dump_data.csv")
+import_data
+
+#購入年月と商品の集計結果
+byItem = import_data.pivot_table(index="purchase_month", columns="item_name", aggfunc="size", fill_value=0)
+byItem
+
+#購入年月と売上金額の集計結果
+byPrice = import_data.pivot_table(index="purchase_month", columns="item_name", values="item_price", aggfunc="sum", fill_value=0)
+byPrice
+
+#購入年月と顧客名の購入数の集計結果
+byCustomer = import_data.pivot_table(index="purchase_month", columns="顧客名", aggfunc="size", fill_value=0)
+byCustomer
+
+#購入年月と地域における販売数の集計結果
+byRegion = import_data.pivot_table(index="purchase_month", columns="地域", aggfunc="size", fill_value=0)
+byRegion
+
+#集計期間内での離脱顧客
+#売上履歴と顧客台帳をライトジョインし、顧客台帳を主体として結合
+away_data = pd.merge(uriage_data, kokyaku_data, left_on="customer_name", right_on="顧客名", how="right")
+away_data[away_data["purchase_date"].isnull()][["顧客名", "メールアドレス", "登録日"]]
+
